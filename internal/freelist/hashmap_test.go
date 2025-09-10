@@ -46,9 +46,9 @@ func TestFreelistHashmap_allocate(t *testing.T) {
 }
 
 func TestFreelistHashmap_mergeWithExist(t *testing.T) {
-	bm1 := pidSet{1: struct{}{}}
+	bm1 := common.PgidSet{1: struct{}{}}
 
-	bm2 := pidSet{5: struct{}{}}
+	bm2 := common.PgidSet{5: struct{}{}}
 	tests := []struct {
 		name            string
 		ids             common.Pgids
@@ -56,7 +56,7 @@ func TestFreelistHashmap_mergeWithExist(t *testing.T) {
 		want            common.Pgids
 		wantForwardmap  map[common.Pgid]uint64
 		wantBackwardmap map[common.Pgid]uint64
-		wantfreemap     map[uint64]pidSet
+		wantfreemap     map[uint64]common.PgidSet
 	}{
 		{
 			name:            "test1",
@@ -65,7 +65,7 @@ func TestFreelistHashmap_mergeWithExist(t *testing.T) {
 			want:            []common.Pgid{1, 2, 3, 4, 5, 6},
 			wantForwardmap:  map[common.Pgid]uint64{1: 6},
 			wantBackwardmap: map[common.Pgid]uint64{6: 6},
-			wantfreemap:     map[uint64]pidSet{6: bm1},
+			wantfreemap:     map[uint64]common.PgidSet{6: bm1},
 		},
 		{
 			name:            "test2",
@@ -74,7 +74,7 @@ func TestFreelistHashmap_mergeWithExist(t *testing.T) {
 			want:            []common.Pgid{1, 2, 3, 5, 6},
 			wantForwardmap:  map[common.Pgid]uint64{1: 3, 5: 2},
 			wantBackwardmap: map[common.Pgid]uint64{6: 2, 3: 3},
-			wantfreemap:     map[uint64]pidSet{3: bm1, 2: bm2},
+			wantfreemap:     map[uint64]common.PgidSet{3: bm1, 2: bm2},
 		},
 		{
 			name:            "test3",
@@ -83,7 +83,7 @@ func TestFreelistHashmap_mergeWithExist(t *testing.T) {
 			want:            []common.Pgid{1, 2, 3},
 			wantForwardmap:  map[common.Pgid]uint64{1: 3},
 			wantBackwardmap: map[common.Pgid]uint64{3: 3},
-			wantfreemap:     map[uint64]pidSet{3: bm1},
+			wantfreemap:     map[uint64]common.PgidSet{3: bm1},
 		},
 		{
 			name:            "test4",
@@ -92,7 +92,7 @@ func TestFreelistHashmap_mergeWithExist(t *testing.T) {
 			want:            []common.Pgid{1, 2, 3},
 			wantForwardmap:  map[common.Pgid]uint64{1: 3},
 			wantBackwardmap: map[common.Pgid]uint64{3: 3},
-			wantfreemap:     map[uint64]pidSet{3: bm1},
+			wantfreemap:     map[uint64]common.PgidSet{3: bm1},
 		},
 	}
 	for _, tt := range tests {

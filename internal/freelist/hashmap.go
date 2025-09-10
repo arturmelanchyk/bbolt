@@ -8,22 +8,19 @@ import (
 	"go.etcd.io/bbolt/internal/common"
 )
 
-// pidSet holds the set of starting pgids which have the same span size
-type pidSet map[common.Pgid]struct{}
-
 type hashMap struct {
 	*shared
 
-	freePagesCount uint64                 // count of free pages(hashmap version)
-	freemaps       map[uint64]pidSet      // key is the size of continuous pages(span), value is a set which contains the starting pgids of same size
-	forwardMap     map[common.Pgid]uint64 // key is start pgid, value is its span size
-	backwardMap    map[common.Pgid]uint64 // key is end pgid, value is its span size
+	freePagesCount uint64                    // count of free pages(hashmap version)
+	freemaps       map[uint64]common.PgidSet // key is the size of continuous pages(span), value is a set which contains the starting pgids of same size
+	forwardMap     map[common.Pgid]uint64    // key is start pgid, value is its span size
+	backwardMap    map[common.Pgid]uint64    // key is end pgid, value is its span size
 }
 
 func (f *hashMap) Init(pgids common.Pgids) {
 	// reset the counter when freelist init
 	f.freePagesCount = 0
-	f.freemaps = make(map[uint64]pidSet)
+	f.freemaps = make(map[uint64]common.PgidSet)
 	f.forwardMap = make(map[common.Pgid]uint64)
 	f.backwardMap = make(map[common.Pgid]uint64)
 
@@ -63,28 +60,28 @@ func (f *hashMap) Allocate(txid common.Txid, n int) common.Pgid {
 		return 0
 	}
 
-	// if we have a exact size match just return short path
-	if bm, ok := f.freemaps[uint64(n)]; ok {
-		for pid := range bm {
+	// if we have an exact size match just return short path
+	if pgidSet, ok := f.freemaps[uint64(n)]; ok {
+		for pid := range pgidSet {
 			// remove the span
 			f.delSpan(pid, uint64(n))
 
 			f.allocs[pid] = txid
 
 			for i := common.Pgid(0); i < common.Pgid(n); i++ {
-				delete(f.cache, pid+i)
+				f.cache.Remove(pid + i)
 			}
 			return pid
 		}
 	}
 
 	// lookup the map to find larger span
-	for size, bm := range f.freemaps {
+	for size, pgidSet := range f.freemaps {
 		if size < uint64(n) {
 			continue
 		}
 
-		for pid := range bm {
+		for pid := range pgidSet {
 			// remove the initial
 			f.delSpan(pid, size)
 
@@ -96,7 +93,7 @@ func (f *hashMap) Allocate(txid common.Txid, n int) common.Pgid {
 			f.addSpan(pid+common.Pgid(n), remain)
 
 			for i := common.Pgid(0); i < common.Pgid(n); i++ {
-				delete(f.cache, pid+i)
+				f.cache.Remove(pid + i)
 			}
 			return pid
 		}
@@ -150,19 +147,22 @@ func (f *hashMap) hashmapFreeCountSlow() int {
 func (f *hashMap) addSpan(start common.Pgid, size uint64) {
 	f.backwardMap[start-1+common.Pgid(size)] = size
 	f.forwardMap[start] = size
-	if _, ok := f.freemaps[size]; !ok {
-		f.freemaps[size] = make(map[common.Pgid]struct{})
+	pgidSet := f.freemaps[size]
+	if !pgidSet.Has(start) {
+		pgidSet = make(common.PgidSet)
 	}
 
-	f.freemaps[size][start] = struct{}{}
+	pgidSet.Add(start)
 	f.freePagesCount += size
 }
 
 func (f *hashMap) delSpan(start common.Pgid, size uint64) {
 	delete(f.forwardMap, start)
 	delete(f.backwardMap, start+common.Pgid(size-1))
-	delete(f.freemaps[size], start)
-	if len(f.freemaps[size]) == 0 {
+
+	pgidSet := f.freemaps[size]
+	pgidSet.Remove(start)
+	if len(pgidSet) == 0 {
 		delete(f.freemaps, size)
 	}
 	f.freePagesCount -= size
@@ -232,16 +232,16 @@ func (f *hashMap) mergeWithExistingSpan(pid common.Pgid) {
 
 // idsFromFreemaps get all free page IDs from f.freemaps.
 // used by test only.
-func (f *hashMap) idsFromFreemaps() map[common.Pgid]struct{} {
-	ids := make(map[common.Pgid]struct{})
-	for size, idSet := range f.freemaps {
-		for start := range idSet {
+func (f *hashMap) idsFromFreemaps() common.PgidSet {
+	ids := make(common.PgidSet)
+	for size, pgidSet := range f.freemaps {
+		for start := range pgidSet {
 			for i := 0; i < int(size); i++ {
 				id := start + common.Pgid(i)
-				if _, ok := ids[id]; ok {
+				if ids.Has(id) {
 					panic(fmt.Sprintf("detected duplicated free page ID: %d in f.freemaps: %v", id, f.freemaps))
 				}
-				ids[id] = struct{}{}
+				ids.Add(id)
 			}
 		}
 	}
@@ -250,15 +250,15 @@ func (f *hashMap) idsFromFreemaps() map[common.Pgid]struct{} {
 
 // idsFromForwardMap get all free page IDs from f.forwardMap.
 // used by test only.
-func (f *hashMap) idsFromForwardMap() map[common.Pgid]struct{} {
-	ids := make(map[common.Pgid]struct{})
+func (f *hashMap) idsFromForwardMap() common.PgidSet {
+	ids := make(common.PgidSet)
 	for start, size := range f.forwardMap {
 		for i := 0; i < int(size); i++ {
 			id := start + common.Pgid(i)
-			if _, ok := ids[id]; ok {
+			if ids.Has(id) {
 				panic(fmt.Sprintf("detected duplicated free page ID: %d in f.forwardMap: %v", id, f.forwardMap))
 			}
-			ids[id] = struct{}{}
+			ids.Add(id)
 		}
 	}
 	return ids
@@ -266,15 +266,15 @@ func (f *hashMap) idsFromForwardMap() map[common.Pgid]struct{} {
 
 // idsFromBackwardMap get all free page IDs from f.backwardMap.
 // used by test only.
-func (f *hashMap) idsFromBackwardMap() map[common.Pgid]struct{} {
-	ids := make(map[common.Pgid]struct{})
+func (f *hashMap) idsFromBackwardMap() common.PgidSet {
+	ids := make(common.PgidSet)
 	for end, size := range f.backwardMap {
 		for i := 0; i < int(size); i++ {
 			id := end - common.Pgid(i)
-			if _, ok := ids[id]; ok {
+			if ids.Has(id) {
 				panic(fmt.Sprintf("detected duplicated free page ID: %d in f.backwardMap: %v", id, f.backwardMap))
 			}
-			ids[id] = struct{}{}
+			ids.Add(id)
 		}
 	}
 	return ids
@@ -283,7 +283,7 @@ func (f *hashMap) idsFromBackwardMap() map[common.Pgid]struct{} {
 func NewHashMapFreelist() Interface {
 	hm := &hashMap{
 		shared:      newShared(),
-		freemaps:    make(map[uint64]pidSet),
+		freemaps:    make(map[uint64]common.PgidSet),
 		forwardMap:  make(map[common.Pgid]uint64),
 		backwardMap: make(map[common.Pgid]uint64),
 	}

@@ -49,7 +49,7 @@ func (f *array) Allocate(txid common.Txid, n int) common.Pgid {
 
 			// Remove from the free cache.
 			for i := common.Pgid(0); i < common.Pgid(n); i++ {
-				delete(f.cache, initial+i)
+				f.cache.Remove(initial + i)
 			}
 			f.allocs[initial] = txid
 			return initial
@@ -71,13 +71,13 @@ func (f *array) freePageIds() common.Pgids {
 func (f *array) mergeSpans(ids common.Pgids) {
 	sort.Sort(ids)
 	common.Verify(func() {
-		idsIdx := make(map[common.Pgid]struct{})
+		idsIdx := make(common.PgidSet)
 		for _, id := range f.ids {
 			// The existing f.ids shouldn't have duplicated free ID.
-			if _, ok := idsIdx[id]; ok {
+			if idsIdx.Has(id) {
 				panic(fmt.Sprintf("detected duplicated free page ID: %d in existing f.ids: %v", id, f.ids))
 			}
-			idsIdx[id] = struct{}{}
+			idsIdx.Add(id)
 		}
 
 		prev := common.Pgid(0)

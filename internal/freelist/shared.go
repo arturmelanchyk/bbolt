@@ -20,7 +20,7 @@ type shared struct {
 
 	readonlyTXIDs []common.Txid               // all readonly transaction IDs.
 	allocs        map[common.Pgid]common.Txid // mapping of Txid that allocated a pgid.
-	cache         map[common.Pgid]struct{}    // fast lookup of all free and pending page ids.
+	cache         common.PgidSet              // fast lookup of all free and pending page ids.
 	pending       map[common.Txid]*txPending  // mapping of soon-to-be free page ids by tx.
 }
 
@@ -28,7 +28,7 @@ func newShared() *shared {
 	return &shared{
 		pending: make(map[common.Txid]*txPending),
 		allocs:  make(map[common.Pgid]common.Txid),
-		cache:   make(map[common.Pgid]struct{}),
+		cache:   make(common.PgidSet),
 	}
 }
 
@@ -49,8 +49,7 @@ func (t *shared) Count() int {
 }
 
 func (t *shared) Freed(pgId common.Pgid) bool {
-	_, ok := t.cache[pgId]
-	return ok
+	return t.cache.Has(pgId)
 }
 
 func (t *shared) Free(txid common.Txid, p *common.Page) {
@@ -76,13 +75,13 @@ func (t *shared) Free(txid common.Txid, p *common.Page) {
 
 	for id := p.Id(); id <= p.Id()+common.Pgid(p.Overflow()); id++ {
 		// Verify that page is not already free.
-		if _, ok := t.cache[id]; ok {
+		if t.cache.Has(id) {
 			panic(fmt.Sprintf("page %d already freed", id))
 		}
 		// Add to the freelist and cache.
 		txp.ids = append(txp.ids, id)
 		txp.alloctx = append(txp.alloctx, allocTxid)
-		t.cache[id] = struct{}{}
+		t.cache.Add(id)
 	}
 }
 
@@ -93,7 +92,7 @@ func (t *shared) Rollback(txid common.Txid) {
 		return
 	}
 	for i, pgid := range txp.ids {
-		delete(t.cache, pgid)
+		t.cache.Remove(pgid)
 		tx := txp.alloctx[i]
 		if tx == 0 {
 			continue
@@ -220,10 +219,10 @@ func (t *shared) Reload(p *common.Page) {
 
 func (t *shared) NoSyncReload(pgIds common.Pgids) {
 	// Build a cache of only pending pages.
-	pcache := make(map[common.Pgid]struct{})
+	pcache := make(common.PgidSet)
 	for _, txp := range t.pending {
 		for _, pendingID := range txp.ids {
-			pcache[pendingID] = struct{}{}
+			pcache.Add(pendingID)
 		}
 	}
 
@@ -231,7 +230,7 @@ func (t *shared) NoSyncReload(pgIds common.Pgids) {
 	// with any pages not in the pending lists.
 	a := []common.Pgid{}
 	for _, id := range pgIds {
-		if _, ok := pcache[id]; !ok {
+		if pcache.Has(id) {
 			a = append(a, id)
 		}
 	}
@@ -243,13 +242,13 @@ func (t *shared) NoSyncReload(pgIds common.Pgids) {
 func (t *shared) reindex() {
 	free := t.freePageIds()
 	pending := t.pendingPageIds()
-	t.cache = make(map[common.Pgid]struct{}, len(free))
+	t.cache = make(common.PgidSet, len(free))
 	for _, id := range free {
-		t.cache[id] = struct{}{}
+		t.cache.Add(id)
 	}
 	for _, txp := range pending {
 		for _, pendingID := range txp.ids {
-			t.cache[pendingID] = struct{}{}
+			t.cache.Add(pendingID)
 		}
 	}
 }

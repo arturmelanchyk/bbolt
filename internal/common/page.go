@@ -389,3 +389,32 @@ func Mergepgids(dst, a, b Pgids) {
 	// Append what's left in follow.
 	_ = append(merged, follow...)
 }
+
+// PgidSet holds the set of starting pgids which have the same span size
+type PgidSet map[Pgid]struct{}
+
+func (s *PgidSet) Add(key Pgid) {
+	if *s == nil {
+		*s = make(map[Pgid]struct{})
+	}
+
+	(*s)[key] = struct{}{}
+}
+
+func (s *PgidSet) Has(key Pgid) bool {
+	if *s == nil {
+		return false
+	}
+
+	_, ok := (*s)[key]
+
+	return ok
+}
+
+func (s *PgidSet) Remove(key Pgid) {
+	if *s == nil {
+		return
+	}
+
+	delete(*s, key)
+}
